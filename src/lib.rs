@@ -16,7 +16,7 @@ const KB_101: u8 = 0x02;
 const KB_84: u8 = 0x01;
 
 #[derive(Debug)]
-enum ErrorKind {
+pub enum ErrorKind {
     ActivateError(i32),
     WaitActiveError(i32),
     CantOpenConsoleError,
@@ -87,7 +87,7 @@ unsafe fn get_fd() -> i32{
     return -1;
 }
 
-fn chvt(ttynum: i32) -> Result<(), ErrorKind> {
+pub fn chvt(ttynum: i32) -> Result<(), ErrorKind> {
     unsafe {
 
         let fd = get_fd();
