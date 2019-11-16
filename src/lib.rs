@@ -96,8 +96,6 @@ pub fn chvt(ttynum: i32) -> Result<(), ErrorKind> {
             return Err(ErrorKind::CantOpenConsoleError);
         }
 
-        dbg!(&fd);
-
         let activate = ioctl(fd, VT_ACTIVATE, ttynum);
         if activate > 0 {
             return Err(ErrorKind::ActivateError(activate));
