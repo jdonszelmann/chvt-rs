@@ -104,6 +104,8 @@ pub fn chvt(ttynum: i32) -> Result<(), ErrorKind> {
         if wait > 0 {
             return Err(ErrorKind::WaitActiveError(wait));
         }
+
+        close(fd);
     }
 
     Ok(())
