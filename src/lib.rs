@@ -10,10 +10,7 @@ use nix::unistd::close;
 
 const VT_ACTIVATE: u64 = 0x5606;
 const VT_WAITACTIVE: u64 = 0x5607;
-
 const KDGKBTYPE: u64 = 0x4B33;
-
-
 const KB_101: u8 = 0x02;
 const KB_84: u8 = 0x01;
 
