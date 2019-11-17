@@ -49,46 +49,41 @@ impl fmt::Display for TryOpenError {
 fn is_a_console(fd: i32) -> bool {
     unsafe {
         let mut arg = 0;
-        return ioctl(fd, KDGKBTYPE, &mut arg) == 0 && ((arg == KB_101) || (arg == KB_84));
+        ioctl(fd, KDGKBTYPE, &mut arg) == 0 && ((arg == KB_101) || (arg == KB_84))
     }
 }
 
 fn try_open(filename: &str, oflag: OFlag) -> Result<i32, TryOpenError> {
-    match fcntl::open(filename, oflag, Mode::empty()) {
-        Ok(fd) => return Ok(fd),
-        Err(err) => {
-            match err.as_errno() {
-                Some(errno) => {
-                    if errno == Errno::EACCES {
-                        return Err(TryOpenError::EACCESS)
-                    }
-                }
-                None => ()
-            }
-        }
-    }
-    Err(TryOpenError::OTHER)
+    fcntl::open(filename, oflag, Mode::empty()).map_err(|error| {
+       match error.as_errno() {
+           Some(errno) => {
+               match errno {
+                   Errno::EACCES => TryOpenError::EACCESS,
+                   _ => TryOpenError::OTHER
+               }
+           }
+           None => TryOpenError::OTHER
+       }
+    })
 }
 
 fn open_a_console(filename: &str) -> Result<i32, ErrorKind> {
 
-    //TODO: Can this be done cleaner?
-    let fd = match try_open(filename, OFlag::O_RDWR) {
-        Err(TryOpenError::EACCESS) => {
-            match try_open(filename, OFlag::O_WRONLY) {
-                Err( TryOpenError::EACCESS) => {
-                    match try_open(filename, OFlag::O_RDONLY) {
-                        Err(_) => return Err(ErrorKind::OpenConsoleError),
-                        Ok(fd) => fd
+    let fd = try_open(filename, OFlag::O_RDWR).or_else(|err| {
+        match err {
+            TryOpenError::OTHER => Err(TryOpenError::OTHER),
+            TryOpenError::EACCESS => {
+                try_open(filename, OFlag::O_WRONLY).or_else(|err| {
+                    match err {
+                        TryOpenError::OTHER => Err(TryOpenError::OTHER),
+                        TryOpenError::EACCESS => {
+                            try_open(filename, OFlag::O_RDONLY)
+                        }
                     }
-                },
-                Err(_) => return Err(ErrorKind::OpenConsoleError),
-                Ok(fd) => fd
+                })
             }
-        },
-        Err(_) => return Err(ErrorKind::OpenConsoleError),
-        Ok(fd) => fd
-    };
+        }
+    }).map_err(|_| ErrorKind::OpenConsoleError)?;
 
     if !is_a_console(fd) {
         close(fd).map_err(|_| ErrorKind::CloseError)?;
@@ -100,30 +95,15 @@ fn open_a_console(filename: &str) -> Result<i32, ErrorKind> {
 
 fn get_fd() -> Result<i32, ErrorKind> {
 
-    match open_a_console("/dev/tty") {
-        Ok(fd) => return Ok(fd),
-        Err(_) => ()
-    }
+    if let Ok(fd) = open_a_console("/dev/tty") { return Ok(fd) }
 
-    match open_a_console("/dev/tty") {
-        Ok(fd) => return Ok(fd),
-        Err(_) => ()
-    }
+    if let Ok(fd) = open_a_console("/dev/tty") { return Ok(fd) }
 
-    match open_a_console("/dev/tty0") {
-        Ok(fd) => return Ok(fd),
-        Err(_) => ()
-    }
+    if let Ok(fd) = open_a_console("/dev/tty0") { return Ok(fd) }
 
-    match open_a_console("/dev/vc/0") {
-        Ok(fd) => return Ok(fd),
-        Err(_) => ()
-    }
+    if let Ok(fd) = open_a_console("/dev/vc/0") { return Ok(fd) }
 
-    match open_a_console("/dev/console") {
-        Ok(fd) => return Ok(fd),
-        Err(_) => ()
-    }
+    if let Ok(fd) = open_a_console("/dev/console") { return Ok(fd) }
 
     for fd in 0..3 {
         if is_a_console(fd) {
