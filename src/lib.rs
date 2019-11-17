@@ -1,10 +1,12 @@
 use libc::ioctl;
-use libc::open;
-use libc::close;
 use std::error::Error;
 use std::fmt;
 use std::fmt::Debug;
-use std::ffi::CString;
+use nix::fcntl::OFlag;
+use nix::{fcntl};
+use nix::errno::Errno;
+use nix::sys::stat::Mode;
+use nix::unistd::close;
 
 const VT_ACTIVATE: u64 = 0x5606;
 const VT_WAITACTIVE: u64 = 0x5607;
@@ -19,7 +21,11 @@ const KB_84: u8 = 0x01;
 pub enum ErrorKind {
     ActivateError(i32),
     WaitActiveError(i32),
-    CantOpenConsoleError,
+    CloseError,
+    OpenConsoleError,
+    ENOTCONN,
+    GetFDError,
+    PermissionDeniedError
 }
 impl Error for ErrorKind {}
 impl fmt::Display for ErrorKind {
@@ -28,75 +34,114 @@ impl fmt::Display for ErrorKind {
     }
 }
 
-unsafe fn is_a_console(fd: i32) -> bool {
-    let mut arg = 0;
-
-    return ioctl(fd, KDGKBTYPE, &arg) == 0 && ((arg == KB_101) || (arg == KB_84));
+#[derive(Debug)]
+pub enum TryOpenError {
+    EACCESS,
+    OTHER
+}
+impl Error for TryOpenError {}
+impl fmt::Display for TryOpenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <dyn Debug>::fmt(self, f)
+    }
 }
 
-unsafe fn open_a_console(filename: &str) -> i32 {
-    let c_str = CString::new(filename).unwrap();
-    let fnam: *const i8 = c_str.as_ptr() as *const i8;
-
-    let mut fd = open(fnam, libc::O_RDWR);
-
-    let mut errno = *libc::__errno_location();
-
-    if fd < 0 && errno == libc::EACCES {
-        fd = open(fnam, libc::O_WRONLY);
+fn is_a_console(fd: i32) -> bool {
+    unsafe {
+        let mut arg = 0;
+        return ioctl(fd, KDGKBTYPE, &mut arg) == 0 && ((arg == KB_101) || (arg == KB_84));
     }
-    if fd < 0 && errno == libc::EACCES {
-        fd = open(fnam, libc::O_RDONLY);
-    }
-    if (fd < 0){
-        return -1;
-    }
-
-    if (!is_a_console(fd)) {
-        close(fd);
-        return -1;
-    }
-    return fd;
 }
 
-unsafe fn get_fd() -> i32{
+fn try_open(filename: &str, oflag: OFlag) -> Result<i32, TryOpenError> {
+    match fcntl::open(filename, oflag, Mode::empty()) {
+        Ok(fd) => return Ok(fd),
+        Err(err) => {
+            match err.as_errno() {
+                Some(errno) => {
+                    if errno == Errno::EACCES {
+                        return Err(TryOpenError::EACCESS)
+                    }
+                }
+                None => ()
+            }
+        }
+    }
+    Err(TryOpenError::OTHER)
+}
 
-    let mut fd = open_a_console("/dev/tty");
-    if (fd >= 0) {
-        return fd;
-    }
-    fd = open_a_console("/dev/tty0");
-    if (fd >= 0){
-        return fd;
-    }
-    fd = open_a_console("/dev/vc/0");
-    if (fd >= 0){
-        return fd;
-    }
-    fd = open_a_console("/dev/console");
-    if (fd >= 0){
-        return fd;
+fn open_a_console(filename: &str) -> Result<i32, ErrorKind> {
+
+    //TODO: Can this be done cleaner?
+    let fd = match try_open(filename, OFlag::O_RDWR) {
+        Err(TryOpenError::EACCESS) => {
+            match try_open(filename, OFlag::O_WRONLY) {
+                Err( TryOpenError::EACCESS) => {
+                    match try_open(filename, OFlag::O_RDONLY) {
+                        Err(_) => return Err(ErrorKind::OpenConsoleError),
+                        Ok(fd) => fd
+                    }
+                },
+                Err(_) => return Err(ErrorKind::OpenConsoleError),
+                Ok(fd) => fd
+            }
+        },
+        Err(_) => return Err(ErrorKind::OpenConsoleError),
+        Ok(fd) => fd
+    };
+
+    if !is_a_console(fd) {
+        close(fd).map_err(|_| ErrorKind::CloseError)?;
+        return Err(ErrorKind::ENOTCONN);
     }
 
-    for fd in 0..3{
-        if is_a_console(fd){
-            return fd;
+    Ok(fd)
+}
+
+fn get_fd() -> Result<i32, ErrorKind> {
+
+    match open_a_console("/dev/tty") {
+        Ok(fd) => return Ok(fd),
+        Err(_) => ()
+    }
+
+    match open_a_console("/dev/tty") {
+        Ok(fd) => return Ok(fd),
+        Err(_) => ()
+    }
+
+    match open_a_console("/dev/tty0") {
+        Ok(fd) => return Ok(fd),
+        Err(_) => ()
+    }
+
+    match open_a_console("/dev/vc/0") {
+        Ok(fd) => return Ok(fd),
+        Err(_) => ()
+    }
+
+    match open_a_console("/dev/console") {
+        Ok(fd) => return Ok(fd),
+        Err(_) => ()
+    }
+
+    for fd in 0..3 {
+        if is_a_console(fd) {
+            return Ok(fd);
         }
     }
 
-    return -1;
+    // If all attempts fail Error
+    Err(ErrorKind::GetFDError)
 }
 
 pub fn chvt(ttynum: i32) -> Result<(), ErrorKind> {
+
+    let fd = get_fd()?;
+
     unsafe {
-
-        let fd = get_fd();
-
-        if fd < 0 {
-            return Err(ErrorKind::CantOpenConsoleError);
-        }
-
         let activate = ioctl(fd, VT_ACTIVATE, ttynum);
+
         if activate > 0 {
             return Err(ErrorKind::ActivateError(activate));
         }
@@ -104,9 +149,9 @@ pub fn chvt(ttynum: i32) -> Result<(), ErrorKind> {
         if wait > 0 {
             return Err(ErrorKind::WaitActiveError(wait));
         }
-
-        close(fd);
     }
+
+    close(fd).map_err(|_| ErrorKind::CloseError)?;
 
     Ok(())
 }

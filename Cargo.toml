@@ -10,3 +10,4 @@ description = "changes tty programatically in rust-ish (only works as root) "
 
 [dependencies]
 libc="0.2.65"
+nix="0.15.0"
