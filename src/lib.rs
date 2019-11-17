@@ -20,24 +20,11 @@ pub enum ErrorKind {
     WaitActiveError(i32),
     CloseError,
     OpenConsoleError,
-    ENOTCONN,
+    NotAConsoleError,
     GetFDError,
-    PermissionDeniedError
 }
 impl Error for ErrorKind {}
 impl fmt::Display for ErrorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <dyn Debug>::fmt(self, f)
-    }
-}
-
-#[derive(Debug)]
-pub enum TryOpenError {
-    EACCESS,
-    OTHER
-}
-impl Error for TryOpenError {}
-impl fmt::Display for TryOpenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <dyn Debug>::fmt(self, f)
     }
@@ -50,44 +37,28 @@ fn is_a_console(fd: i32) -> bool {
     }
 }
 
-fn try_open(filename: &str, oflag: OFlag) -> Result<i32, TryOpenError> {
-    fcntl::open(filename, oflag, Mode::empty()).map_err(|error| {
-       match error.as_errno() {
-           Some(errno) => {
-               match errno {
-                   Errno::EACCES => TryOpenError::EACCESS,
-                   _ => TryOpenError::OTHER
-               }
-           }
-           None => TryOpenError::OTHER
-       }
-    })
-}
-
 fn open_a_console(filename: &str) -> Result<i32, ErrorKind> {
+    for oflag in &[OFlag::O_RDWR, OFlag::O_RDONLY, OFlag::O_WRONLY] {
+        match fcntl::open(filename, *oflag, Mode::empty()) {
+            Ok(fd) => {
+                if !is_a_console(fd) {
+                    close(fd).map_err(|_| ErrorKind::CloseError)?;
+                    return Err(ErrorKind::NotAConsoleError);
+                }
 
-    let fd = try_open(filename, OFlag::O_RDWR).or_else(|err| {
-        match err {
-            TryOpenError::OTHER => Err(TryOpenError::OTHER),
-            TryOpenError::EACCESS => {
-                try_open(filename, OFlag::O_WRONLY).or_else(|err| {
-                    match err {
-                        TryOpenError::OTHER => Err(TryOpenError::OTHER),
-                        TryOpenError::EACCESS => {
-                            try_open(filename, OFlag::O_RDONLY)
-                        }
-                    }
-                })
+                return Ok(fd)
+            },
+            Err(error) => match error.as_errno() {
+                Some(errno) => match errno {
+                    Errno::EACCES => continue,
+                    _ => break
+                }
+                _ => break
             }
         }
-    }).map_err(|_| ErrorKind::OpenConsoleError)?;
-
-    if !is_a_console(fd) {
-        close(fd).map_err(|_| ErrorKind::CloseError)?;
-        return Err(ErrorKind::ENOTCONN);
     }
 
-    Ok(fd)
+    Err(ErrorKind::OpenConsoleError)
 }
 
 fn get_fd() -> Result<i32, ErrorKind> {
