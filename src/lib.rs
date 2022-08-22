@@ -47,14 +47,11 @@ fn open_a_console(filename: &str) -> Result<i32, ErrorKind> {
                 }
 
                 return Ok(fd)
-            },
-            Err(error) => match error.as_errno() {
-                Some(errno) => match errno {
-                    Errno::EACCES => continue,
-                    _ => break
-                }
-                _ => break
             }
+            Err(error) => match error.as_errno() {
+                Some(Errno::EACCES) => continue,
+                _ => break,
+            },
         }
     }
 
