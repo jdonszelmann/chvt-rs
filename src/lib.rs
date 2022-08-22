@@ -8,9 +8,9 @@ use nix::errno::Errno;
 use nix::sys::stat::Mode;
 use nix::unistd::close;
 
-const VT_ACTIVATE: u64 = 0x5606;
-const VT_WAITACTIVE: u64 = 0x5607;
-const KDGKBTYPE: u64 = 0x4B33;
+const VT_ACTIVATE: u16 = 0x5606;
+const VT_WAITACTIVE: u16 = 0x5607;
+const KDGKBTYPE: u16 = 0x4B33;
 const KB_101: u8 = 0x02;
 const KB_84: u8 = 0x01;
 
@@ -33,7 +33,7 @@ impl fmt::Display for ErrorKind {
 fn is_a_console(fd: i32) -> bool {
     unsafe {
         let mut arg = 0;
-        ioctl(fd, KDGKBTYPE, &mut arg) == 0 && ((arg == KB_101) || (arg == KB_84))
+        ioctl(fd, KDGKBTYPE.into(), &mut arg) == 0 && ((arg == KB_101) || (arg == KB_84))
     }
 }
 
@@ -88,12 +88,12 @@ pub fn chvt(ttynum: i32) -> Result<(), ErrorKind> {
     let fd = get_fd()?;
 
     unsafe {
-        let activate = ioctl(fd, VT_ACTIVATE, ttynum);
+        let activate = ioctl(fd, VT_ACTIVATE.into(), ttynum);
 
         if activate > 0 {
             return Err(ErrorKind::ActivateError(activate));
         }
-        let wait = ioctl(fd, VT_WAITACTIVE, ttynum);
+        let wait = ioctl(fd, VT_WAITACTIVE.into(), ttynum);
         if wait > 0 {
             return Err(ErrorKind::WaitActiveError(wait));
         }
